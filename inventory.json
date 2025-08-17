@@ -1,0 +1,8 @@
+[
+  {"name": "Brinjal", "qty": "15 kg", "price": 20, "cost": 12},
+  {"name": "Onion",  "qty": "10 kg", "price": 30, "cost": 18},
+  {"name": "Tomato", "qty": "17 kg", "price": 25, "cost": 15},
+  {"name": "Cauliflower", "qty": "8 pcs", "price": 35, "cost": 25}
+]
+
+
