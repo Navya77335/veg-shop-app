@@ -1,2 +1,4 @@
-streamlit
-reportlab
+streamlit==1.48.1
+reportlab==4.2.2
+
+
