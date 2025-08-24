@@ -157,11 +157,11 @@ st.subheader("Add to Cart")
 item_names = [it["name"] for it in st.session_state.inventory]
 col1, col2, col3 = st.columns([2,2,1])
 with col1:
-    selected_name = st.selectbox("Item", item_names)
+    selected_name = st.selectbox("Item", item_names, key="add_item")
 with col2:
-    qty_text = st.text_input("Quantity", placeholder="e.g., 500 g or 2 pcs")
+    qty_text = st.text_input("Quantity", placeholder="e.g., 500 g or 2 pcs", key="add_qty")
 with col3:
-    if st.button("Add"):
+    if st.button("Add", key="add_button"):
         if not qty_text:
             st.warning("Enter quantity like '500 g' or '2 pcs'")
         else:
@@ -176,24 +176,45 @@ with col3:
                 st.session_state.cart.append({"name": selected_name, "qty": qty_text, "price": stock_item["price"]})
                 st.success(f"Added {qty_text} of {selected_name}")
 
-# Cart view
+# Cart view with remove and edit option
 st.subheader("Cart")
 if not st.session_state.cart:
     st.info("Cart is empty")
 else:
     grand_total = 0
-    cart_rows = []
-    for c in st.session_state.cart:
+    for idx, c in enumerate(st.session_state.cart):
         qn, qu = parse_qty(c["qty"])
         total = row_total(qn, qu, c["price"])
         grand_total += total
-        cart_rows.append({
-            "Name": c["name"],
-            "Qty": c["qty"],
-            "Unit Price": f"₹{c['price']}/kg" if qu=="g" else f"₹{c['price']}/pc",
-            "Total": f"₹{total:.2f}"
-        })
-    st.dataframe(cart_rows, use_container_width=True, hide_index=True)
+
+        with st.expander(f"{idx+1}. {c['name']} - {c['qty']} (₹{total:.2f})", expanded=False):
+            st.write(f"Unit Price: ₹{c['price']}/{'kg' if qu=='g' else 'pc'}")
+            new_qty = st.text_input(
+                f"Edit quantity for {c['name']}",
+                value=c["qty"],
+                key=f"edit_qty_{idx}"
+            )
+            cols = st.columns([1, 1])
+            with cols[0]:
+                if st.button("Update", key=f"update_{idx}"):
+                    stock_item = next(i for i in st.session_state.inventory if i["name"] == c["name"])
+                    sn, su = parse_qty(stock_item["qty"])
+                    qn_new, qu_new = parse_qty(new_qty)
+                    if qu_new != su:
+                        st.error(f"Use unit '{su}' for this item.")
+                    elif qn_new > sn:
+                        st.error("Not enough stock")
+                    elif qn_new <= 0:
+                        st.error("Quantity must be greater than 0")
+                    else:
+                        st.session_state.cart[idx]["qty"] = new_qty
+                        st.success("Updated!")
+                        st.rerun()
+            with cols[1]:
+                if st.button("Remove", key=f"remove_{idx}"):
+                    st.session_state.cart.pop(idx)
+                    st.rerun()
+
     st.markdown(f"**Grand Total: ₹{grand_total:.2f}**")
 
 # Checkout
@@ -245,19 +266,17 @@ if st.session_state.owner_logged_in:
     st.markdown("### Update / Remove")
     names = [i["name"] for i in st.session_state.inventory]
     if names:
-        sel = st.selectbox("Select Item", names)
+        sel = st.selectbox("Select Item", names, key="owner_select")
         item = next(i for i in st.session_state.inventory if i["name"]==sel)
-        u_qty = st.text_input("New Quantity", value=item["qty"])
-        u_price = st.number_input("New Price", value=int(item["price"]), step=1)
-        u_cost = st.number_input("New Cost", value=int(item.get("cost",0)), step=1)
+        u_qty = st.text_input("New Quantity", value=item["qty"], key="owner_qty")
+        u_price = st.number_input("New Price", value=int(item["price"]), step=1, key="owner_price")
+        u_cost = st.number_input("New Cost", value=int(item.get("cost",0)), step=1, key="owner_cost")
         cols = st.columns(2)
-        if cols[0].button("Update"):
+        if cols[0].button("Update", key="owner_update"):
             item.update({"qty": u_qty, "price": int(u_price), "cost": int(u_cost)})
             save_json(INVENTORY_FILE, st.session_state.inventory)
             st.success("Updated")
-        if cols[1].button("Remove"):
+        if cols[1].button("Remove", key="owner_remove"):
             st.session_state.inventory = [i for i in st.session_state.inventory if i["name"] != sel]
             save_json(INVENTORY_FILE, st.session_state.inventory)
             st.success("Removed")
-
-
