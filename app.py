@@ -8,8 +8,8 @@ from reportlab.lib.styles import getSampleStyleSheet
 
 # ----------------- Config -----------------
 st.set_page_config(page_title="Vegetable Shop", layout="wide")
-OWNER_USER = "admin"
-OWNER_PASS = "1234"
+OWNER_USER = "Sidhu"
+OWNER_PASS = "Mani@2"
 INVENTORY_FILE = "inventory.json"
 CUSTOMERS_FILE = "customers.json"
 
@@ -259,4 +259,5 @@ if st.session_state.owner_logged_in:
             st.session_state.inventory = [i for i in st.session_state.inventory if i["name"] != sel]
             save_json(INVENTORY_FILE, st.session_state.inventory)
             st.success("Removed")
+
 
