@@ -118,18 +118,42 @@ def remove_duplicates(items):
         seen[item["name"]] = item
     return list(seen.values())
 
-default_inventory = [
-    {"name": "Brinjal", "qty": "15 kg", "price": 20, "cost": 12},
-    {"name": "Onion", "qty": "10 kg", "price": 30, "cost": 18},
-    {"name": "Tomato", "qty": "17 kg", "price": 25, "cost": 15},
-    {"name": "Lady Fingers", "qty": "18 kg", "price": 22, "cost": 14},
-    {"name": "Beans", "qty": "15 kg", "price": 28, "cost": 20},
-    {"name": "Cauliflower", "qty": "8 pcs", "price": 35, "cost": 25},
-]
+def update_stock(cart):
+    for c in cart:
+        item = next(i for i in st.session_state.inventory if i["name"] == c["name"])
+        stock_num, stock_unit = parse_qty(item["qty"])
+        buy_num, buy_unit = parse_qty(c["qty"])
+
+        if stock_unit == "g":
+            if buy_unit == "kg":
+                buy_num *= 1000
+            elif buy_unit == "g":
+                pass
+            else:
+                continue
+            new_qty = max(stock_num - buy_num, 0)
+            item["qty"] = format_qty(new_qty, "g")
+
+        elif stock_unit == "pcs":
+            if buy_unit != "pcs":
+                continue
+            new_qty = max(stock_num - buy_num, 0)
+            item["qty"] = f"{int(new_qty)} pcs"
+
+        elif stock_unit == "liters":
+            if buy_unit != "liters":
+                continue
+            new_qty = max(stock_num - buy_num, 0)
+            item["qty"] = f"{new_qty} liters"
 
 # ----------------- Session State -----------------
 if "inventory" not in st.session_state:
-    loaded = safe_load_json(INVENTORY_FILE, default_inventory)
+    loaded = safe_load_json(INVENTORY_FILE, [
+        {"name": "Brinjal", "qty": "15 kg", "price": 20, "cost": 12},
+        {"name": "Onion", "qty": "10 kg", "price": 30, "cost": 18},
+        {"name": "Tomato", "qty": "17 kg", "price": 25, "cost": 15},
+        {"name": "Cauliflower", "qty": "8 pcs", "price": 35, "cost": 25},
+    ])
     st.session_state.inventory = remove_duplicates(loaded)
 if "customers" not in st.session_state:
     st.session_state.customers = safe_load_json(CUSTOMERS_FILE, [])
@@ -249,22 +273,24 @@ if submitted:
     elif not (phone.isdigit() and len(phone) == 10):
         st.error("Phone must be 10 digits")
     else:
-        for c in st.session_state.cart:
-            item = next(i for i in st.session_state.inventory if i["name"] == c["name"])
-            base_num, base_unit = parse_qty(item["qty"])
-            qn, qu = parse_qty(c["qty"])
-            if qu == base_unit:
-                item["qty"] = format_qty(max(base_num - qn, 0), base_unit)
+        update_stock(st.session_state.cart)
         grand_total = sum([row_total(*parse_qty(c["qty"]), c["price"]) for c in st.session_state.cart])
-        order = {"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "phone": phone,
-                 "items": st.session_state.cart.copy(), "total": grand_total}
+        order = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "phone": phone,
+            "items": st.session_state.cart.copy(),
+            "total": grand_total,
+        }
         st.session_state.customers.append(order)
         save_json(INVENTORY_FILE, st.session_state.inventory)
         save_json(CUSTOMERS_FILE, st.session_state.customers)
         pdf_bytes = generate_pdf_receipt_bytes(phone, st.session_state.cart, grand_total)
-        st.download_button("⬇️ Download PDF Receipt", data=pdf_bytes,
-                           file_name=f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                           mime="application/pdf")
+        st.download_button(
+            "⬇️ Download PDF Receipt",
+            data=pdf_bytes,
+            file_name=f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+            mime="application/pdf",
+        )
         st.session_state.cart = []
         st.success(f"Checkout complete. Total ₹{grand_total:.2f}")
 
@@ -310,8 +336,4 @@ if st.session_state.owner_logged_in:
         if cols[0].button("Update", key="owner_update"):
             item.update({"qty": u_qty, "price": int(u_price), "cost": int(u_cost)})
             save_json(INVENTORY_FILE, remove_duplicates(st.session_state.inventory))
-            st.success("Updated")
-        if cols[1].button("Remove", key="owner_remove"):
-            st.session_state.inventory = [i for i in st.session_state.inventory if i["name"] != sel]
-            save_json(INVENTORY_FILE, st.session_state.inventory)
-            st.success("Removed")
+            st.success("
