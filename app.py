@@ -31,41 +31,29 @@ def save_json(path, data):
     except Exception:
         pass
 
-# Updated to handle kg, grams, pcs, liters consistently
 def parse_qty(qty):
     if isinstance(qty, (int, float)):
         return float(qty), ""
-    qty_str = str(qty).strip().lower()
+    qty_str = str(qty).strip().lower().replace(" ", "")
     num, unit = "", ""
     for c in qty_str:
         if c.isdigit() or c == ".":
             num += c
-        elif c.isalpha():
+        else:
             unit += c
     try:
         num = float(num)
     except:
         num = 0
-    if unit in ["kg", "kgs"]:
-        return num * 1000, "g"  # store weight as grams
-    elif unit == "g":
-        return num, "g"
-    elif unit in ["pcs", "pc"]:
-        return num, "pcs"
-    elif unit in ["liters", "liter", "l"]:
-        return num, "liters"
+    if unit == "kg":
+        num *= 1000
+        unit = "g"
     return num, unit
 
 def format_qty(num, unit):
     if unit == "g" and num >= 1000:
         return f"{num/1000:.2f} kg"
-    elif unit == "g":
-        return f"{num:.0f} g"
-    elif unit == "pcs":
-        return f"{int(num)} pcs"
-    elif unit == "liters":
-        return f"{num:.2f} liters"
-    return f"{num} {unit}".strip()
+    return f"{num:.0f} {unit}".strip()
 
 def row_total(qty_num, unit, price):
     if unit == "g":
@@ -86,8 +74,8 @@ def generate_pdf_receipt_bytes(phone, items, grand_total):
     for item in items:
         qn, qu = parse_qty(item["qty"])
         total = row_total(qn, qu, item["price"])
-        price_label = f"₹{item['price']}/kg" if qu == "g" else f"₹{item['price']}/{qu}"
-        data.append([item["name"], item["qty"], price_label, f"₹{total:.2f}"])
+        label = f"₹{item['price']}/kg" if qu == "g" else f"₹{item['price']}/pc"
+        data.append([item["name"], item["qty"], label, f"₹{total:.2f}"])
     data.append(["", "", "Grand Total", f"₹{grand_total:.2f}"])
     table = Table(data, colWidths=[180, 120, 120, 100])
     table.setStyle(TableStyle([
@@ -95,7 +83,6 @@ def generate_pdf_receipt_bytes(phone, items, grand_total):
         ("TEXTCOLOR", (0,0), (-1,0), colors.black),
         ("ALIGN", (0,0), (-1,-1), "CENTER"),
         ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("BOTTOMPADDING", (0,0), (-1,0), 12),
         ("GRID", (0,0), (-1,-1), 1, colors.black),
     ]))
     elements.append(table)
@@ -103,7 +90,6 @@ def generate_pdf_receipt_bytes(phone, items, grand_total):
     buffer.seek(0)
     return buffer.read()
 
-# Everything else stays the same; below we update only checkout and add-to-cart logic
 # ----------------- Defaults -----------------
 def remove_duplicates(items):
     seen = {}
@@ -111,19 +97,118 @@ def remove_duplicates(items):
         seen[item["name"]] = item
     return list(seen.values())
 
-def parse_qty_to_kg(qty_str):
-    qn, qu = parse_qty(qty_str)
-    if qu == "g":
-        return qn / 1000
-    return qn
+def to_base_unit(num, unit):
+    """Converts kg/g to grams; liters/pcs stay as is."""
+    if unit == "kg":
+        return num * 1000, "g"
+    return num, unit
 
-def update_stock(item, purchased_qty):
-    base_num, base_unit = parse_qty(item["qty"])
-    qn, qu = parse_qty(purchased_qty)
-    if base_unit == qu:
-        item["qty"] = format_qty(max(base_num - qn, 0), base_unit)
+def subtract_stock(item_qty, sale_qty):
+    sn, su = parse_qty(item_qty)
+    qn, qu = parse_qty(sale_qty)
+    sn, su = to_base_unit(sn, su)
+    qn, qu = to_base_unit(qn, qu)
+    if su == qu:
+        remaining = max(sn - qn, 0)
+        return format_qty(remaining, su)
+    return item_qty
 
-# Your UI and session code remains unchanged but uses parse_qty/format_qty everywhere
-# (For brevity not rewriting full UI again, just trust that all quantity calculations now work with pcs, liters, g, kg)
+default_inventory = [
+    {"name": "Brinjal", "qty": "15 kg", "price": 20, "cost": 12},
+    {"name": "Onion", "qty": "10 kg", "price": 30, "cost": 18},
+    {"name": "Tomato", "qty": "17 kg", "price": 25, "cost": 15},
+    {"name": "Lady Fingers", "qty": "18 kg", "price": 22, "cost": 14},
+    {"name": "Beans", "qty": "15 kg", "price": 28, "cost": 20},
+    {"name": "Cauliflower", "qty": "8 pcs", "price": 35, "cost": 25},
+]
 
-# ---- The rest of the code is identical to what you provided ----
+# ----------------- Session State -----------------
+if "inventory" not in st.session_state:
+    st.session_state.inventory = remove_duplicates(safe_load_json(INVENTORY_FILE, default_inventory))
+if "customers" not in st.session_state:
+    st.session_state.customers = safe_load_json(CUSTOMERS_FILE, [])
+if "cart" not in st.session_state:
+    st.session_state.cart = []
+if "owner_logged_in" not in st.session_state:
+    st.session_state.owner_logged_in = False
+
+# ----------------- UI -----------------
+st.title("🛒 Vegetable Shop (Web)")
+st.caption("Customer view + Owner controls. Supports kg, g, pcs, liters.")
+
+# Inventory display
+st.subheader("Inventory")
+avail_map = {it["name"]: parse_qty(it["qty"]) for it in st.session_state.inventory}
+rows = []
+for item in st.session_state.inventory:
+    qn, qu = avail_map[item["name"]]
+    rows.append({
+        "Name": item["name"],
+        "Available": format_qty(qn, qu),
+        "Price": f"₹{item['price']}/kg" if qu == "g" else f"₹{item['price']}/pc"
+    })
+st.dataframe(rows, use_container_width=True, hide_index=True)
+
+# Add to Cart
+st.subheader("Add to Cart")
+item_names = [i["name"] for i in st.session_state.inventory]
+col1, col2, col3, col4 = st.columns([2, 1.5, 1.5, 1])
+with col1:
+    name = st.selectbox("Item", item_names)
+with col2:
+    qty_num = st.number_input("Quantity", min_value=0.1, step=0.1)
+with col3:
+    unit = st.selectbox("Unit", ["kg", "g", "pcs", "liters"])
+with col4:
+    if st.button("Add"):
+        stock = next(i for i in st.session_state.inventory if i["name"] == name)
+        sn, su = parse_qty(stock["qty"])
+        sn, su = to_base_unit(sn, su)
+        qn, qu = to_base_unit(qty_num, unit)
+        if su != qu:
+            st.error(f"Please use unit '{su}' for this item")
+        elif qn > sn:
+            st.error("Not enough stock")
+        else:
+            st.session_state.cart.append({"name": name, "qty": f"{qty_num} {unit}", "price": stock["price"]})
+            st.success(f"Added {qty_num} {unit} of {name}")
+
+# Cart
+st.subheader("Cart")
+if not st.session_state.cart:
+    st.info("Cart is empty")
+else:
+    total = 0
+    for idx, c in enumerate(st.session_state.cart):
+        qn, qu = parse_qty(c["qty"])
+        row = row_total(qn, qu, c["price"])
+        total += row
+        st.write(f"{idx+1}. {c['name']} - {c['qty']} (₹{row:.2f})")
+    st.markdown(f"**Grand Total: ₹{total:.2f}**")
+
+# Checkout
+st.subheader("Checkout")
+with st.form("checkout"):
+    phone = st.text_input("Customer Phone")
+    ok = st.form_submit_button("Generate Bill & Update Stock")
+if ok:
+    if not st.session_state.cart:
+        st.error("Cart is empty")
+    elif not (phone.isdigit() and len(phone)==10):
+        st.error("Invalid phone")
+    else:
+        for c in st.session_state.cart:
+            item = next(i for i in st.session_state.inventory if i["name"] == c["name"])
+            item["qty"] = subtract_stock(item["qty"], c["qty"])
+        grand = sum([row_total(*parse_qty(c["qty"]), c["price"]) for c in st.session_state.cart])
+        order = {"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "phone": phone,
+                 "items": st.session_state.cart.copy(), "total": grand}
+        st.session_state.customers.append(order)
+        save_json(INVENTORY_FILE, st.session_state.inventory)
+        save_json(CUSTOMERS_FILE, st.session_state.customers)
+        pdf = generate_pdf_receipt_bytes(phone, st.session_state.cart, grand)
+        st.download_button("⬇️ Download PDF Receipt", data=pdf,
+                           file_name=f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                           mime="application/pdf")
+        st.session_state.cart = []
+        st.success(f"Checkout complete. Total ₹{grand:.2f}")
