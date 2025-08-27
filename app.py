@@ -90,7 +90,6 @@ def generate_pdf_receipt_bytes(phone, items, grand_total):
     buffer.seek(0)
     return buffer.read()
 
-# ----------------- Defaults -----------------
 def remove_duplicates(items):
     seen = {}
     for item in items:
@@ -98,7 +97,6 @@ def remove_duplicates(items):
     return list(seen.values())
 
 def to_base_unit(num, unit):
-    """Converts kg/g to grams; liters/pcs stay as is."""
     if unit == "kg":
         return num * 1000, "g"
     return num, unit
@@ -113,6 +111,7 @@ def subtract_stock(item_qty, sale_qty):
         return format_qty(remaining, su)
     return item_qty
 
+# ----------------- Defaults -----------------
 default_inventory = [
     {"name": "Brinjal", "qty": "15 kg", "price": 20, "cost": 12},
     {"name": "Onion", "qty": "10 kg", "price": 30, "cost": 18},
@@ -212,3 +211,62 @@ if ok:
                            mime="application/pdf")
         st.session_state.cart = []
         st.success(f"Checkout complete. Total ₹{grand:.2f}")
+
+# ----------------- Owner Login & Inventory Management -----------------
+st.subheader("Owner Login")
+if not st.session_state.owner_logged_in:
+    user = st.text_input("Username")
+    pw = st.text_input("Password", type="password")
+    if st.button("Login"):
+        if user == OWNER_USER and pw == OWNER_PASS:
+            st.session_state.owner_logged_in = True
+            st.success("Logged in successfully")
+        else:
+            st.error("Invalid credentials")
+else:
+    st.info(f"Welcome, {OWNER_USER}!")
+    with st.expander("Manage Inventory"):
+        # Add new item
+        st.markdown("### Add Item")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            new_name = st.text_input("Name")
+        with col2:
+            new_qty = st.text_input("Quantity (e.g. 10 kg)")
+        with col3:
+            new_price = st.number_input("Price", min_value=0.0)
+        with col4:
+            new_cost = st.number_input("Cost", min_value=0.0)
+        if st.button("Add Item"):
+            st.session_state.inventory.append({"name": new_name, "qty": new_qty, "price": new_price, "cost": new_cost})
+            save_json(INVENTORY_FILE, st.session_state.inventory)
+            st.success("Item added successfully")
+        
+        # Update existing item
+        st.markdown("### Update Item")
+        upd_item = st.selectbox("Select item to update", [i["name"] for i in st.session_state.inventory])
+        upd_qty = st.text_input("New Quantity (e.g. 5 kg)")
+        upd_price = st.number_input("New Price", min_value=0.0, key="upd_price")
+        upd_cost = st.number_input("New Cost", min_value=0.0, key="upd_cost")
+        if st.button("Update Item"):
+            for item in st.session_state.inventory:
+                if item["name"] == upd_item:
+                    if upd_qty:
+                        item["qty"] = upd_qty
+                    item["price"] = upd_price
+                    item["cost"] = upd_cost
+            save_json(INVENTORY_FILE, st.session_state.inventory)
+            st.success("Item updated successfully")
+
+        # Remove item
+        st.markdown("### Remove Item")
+        del_item = st.selectbox("Select item to remove", [i["name"] for i in st.session_state.inventory], key="del_item")
+        if st.button("Remove Item"):
+            st.session_state.inventory = [i for i in st.session_state.inventory if i["name"] != del_item]
+            save_json(INVENTORY_FILE, st.session_state.inventory)
+            st.success("Item removed successfully")
+
+        # Logout
+        if st.button("Logout"):
+            st.session_state.owner_logged_in = False
+            st.info("Logged out")
