@@ -136,6 +136,25 @@ if "owner_logged_in" not in st.session_state:
 st.title("🛒 Vegetable Shop (Web)")
 st.caption("Customer view + Owner controls. Supports kg, g, pcs, liters.")
 
+# Sidebar: Owner login
+st.sidebar.subheader("Owner Login")
+if not st.session_state.owner_logged_in:
+    with st.sidebar.form("owner_login_form"):
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        login = st.form_submit_button("Login")
+    if login:
+        if u == OWNER_USER and p == OWNER_PASS:
+            st.session_state.owner_logged_in = True
+            st.sidebar.success("Owner access granted!")
+        else:
+            st.sidebar.error("Incorrect credentials")
+else:
+    st.sidebar.success("Logged in as owner")
+    if st.sidebar.button("Logout"):
+        st.session_state.owner_logged_in = False
+
+
 # Inventory display
 st.subheader("Inventory")
 avail_map = {it["name"]: parse_qty(it["qty"]) for it in st.session_state.inventory}
@@ -259,5 +278,6 @@ if st.session_state.owner_logged_in:
             st.session_state.inventory = [i for i in st.session_state.inventory if i["name"] != sel]
             save_json(INVENTORY_FILE, st.session_state.inventory)
             st.success("Removed")
+
 
 
