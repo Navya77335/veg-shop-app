@@ -51,12 +51,10 @@ def generate_pdf_receipt_bytes(phone, items, total):
     doc = SimpleDocTemplate(buffer, pagesize=A4)
     styles = getSampleStyleSheet()
     elements = [Paragraph(f"Receipt for {phone}", styles["Title"]), Spacer(1, 12)]
-
     table_data = [["Item", "Qty", "Price"]]
     for c in items:
         table_data.append([c["name"], c["qty"], f"₹{c['price']}"])
     table_data.append(["", "Total", f"₹{total:.2f}"])
-
     table = Table(table_data)
     table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
@@ -65,7 +63,6 @@ def generate_pdf_receipt_bytes(phone, items, total):
         ('GRID', (0, 0), (-1, -1), 1, colors.black)
     ]))
     elements.append(table)
-
     doc.build(elements)
     buffer.seek(0)
     return buffer
@@ -73,13 +70,10 @@ def generate_pdf_receipt_bytes(phone, items, total):
 # ----------------- Main App -----------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
-
 if "inventory" not in st.session_state:
     st.session_state.inventory = load_json(INVENTORY_FILE)
-
 if "customers" not in st.session_state:
     st.session_state.customers = load_json(CUSTOMERS_FILE)
-
 if "cart" not in st.session_state:
     st.session_state.cart = []
 
@@ -105,7 +99,6 @@ else:
                 st.session_state.inventory.pop(i)
                 save_json(INVENTORY_FILE, st.session_state.inventory)
                 st.experimental_rerun()
-
         name = st.text_input("New Item Name")
         qty = st.text_input("Quantity (e.g., 2 kg, 500 g, 5 pcs)")
         price = st.number_input("Price", min_value=0.0, step=0.5)
@@ -121,7 +114,6 @@ else:
             st.write(f"{c['name']} - {c['qty']} @ ₹{c['price']} per unit")
             if st.button(f"Remove {c['name']}", key=f"rm{i}"):
                 st.session_state.cart.pop(i)
-
         item_names = [item["name"] for item in st.session_state.inventory]
         item_name = st.selectbox("Select Item", [""] + item_names)
         qty = st.text_input("Quantity (e.g., 2 kg, 500 g, 5 pcs)", key="cart_qty")
@@ -130,7 +122,6 @@ else:
             if item:
                 if st.button("Add to Cart"):
                     st.session_state.cart.append({"name": item_name, "qty": qty, "price": item["price"]})
-
         phone = st.text_input("Customer Phone (10 digits)")
         if st.button("Checkout"):
             if not st.session_state.cart:
@@ -142,7 +133,6 @@ else:
                     item = next(i for i in st.session_state.inventory if i["name"] == c["name"])
                     stock_num, stock_unit = parse_qty(item["qty"])
                     buy_num, buy_unit = parse_qty(c["qty"])
-
                     if stock_unit == "g":
                         if buy_unit == "kg":
                             buy_num *= 1000
@@ -162,7 +152,6 @@ else:
                             continue
                         new_qty = max(stock_num - buy_num, 0)
                         item["qty"] = f"{new_qty} liters"
-
                 grand_total = sum([row_total(*parse_qty(c["qty"]), c["price"]) for c in st.session_state.cart])
                 order = {
                     "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -171,10 +160,8 @@ else:
                     "total": grand_total
                 }
                 st.session_state.customers.append(order)
-
                 save_json(INVENTORY_FILE, st.session_state.inventory)
                 save_json(CUSTOMERS_FILE, st.session_state.customers)
-
                 pdf_bytes = generate_pdf_receipt_bytes(phone, st.session_state.cart, grand_total)
                 st.download_button(
                     "⬇️ Download PDF Receipt",
@@ -182,7 +169,6 @@ else:
                     file_name=f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                     mime="application/pdf"
                 )
-
                 st.session_state.cart = []
                 st.success(f"Checkout complete. Total ₹{grand_total:.2f}")
 
