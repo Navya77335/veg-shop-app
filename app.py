@@ -6,38 +6,55 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from twilio.rest import Client
-import boto3
+
+# ----------------- Twilio Config -----------------
+TWILIO_SID = "your_twilio_sid"
+TWILIO_AUTH = "your_auth_token"
+TWILIO_WHATSAPP = "whatsapp:+14155238886"  # Twilio sandbox WhatsApp number
+TWILIO_SMS = "+1234567890"  # Twilio SMS sender number
+
+def send_receipt_via_whatsapp(phone, pdf_link):
+    client = Client(TWILIO_SID, TWILIO_AUTH)
+    message = client.messages.create(
+        body=f"Thank you for shopping! Download your receipt here: {pdf_link}",
+        from_=TWILIO_WHATSAPP,
+        to=f"whatsapp:+91{phone}"
+    )
+    return message.sid
+
+def send_receipt_via_sms(phone, pdf_link):
+    client = Client(TWILIO_SID, TWILIO_AUTH)
+    message = client.messages.create(
+        body=f"Thank you for shopping! Download your receipt here: {pdf_link}",
+        from_=TWILIO_SMS,
+        to=f"+91{phone}"
+    )
+    return message.sid
 
 # ----------------- Config -----------------
 st.set_page_config(page_title="Vegetable Shop", layout="wide")
-
 OWNER_USER = "Sidhu"
 OWNER_PASS = "Mani@2"
 INVENTORY_FILE = "inventory.json"
 CUSTOMERS_FILE = "customers.json"
-
-# ----------------- Load Secrets -----------------
-AWS_ACCESS_KEY = "your_aws_access_key_id"
-AWS_SECRET_KEY = "your_aws_secret_access_key"
-AWS_BUCKET_NAME = "your-bucket-name"
-
-TWILIO_SID = "your_twilio_account_sid"
-TWILIO_AUTH = "your_twilio_auth_token"
-TWILIO_SMS = "+1234567890"   # your Twilio phone number (SMS capable)
 
 # ----------------- Helpers -----------------
 def safe_load_json(path, default):
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                return data if data else default
         except Exception:
             return default
     return default
 
 def save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
 def parse_qty(qty):
     if isinstance(qty, (int, float)):
@@ -57,6 +74,23 @@ def parse_qty(qty):
         num *= 1000
         unit = "g"
     return num, unit
+
+def parse_qty_to_kg(qty_str):
+    qty_str = qty_str.strip().lower()
+    parts = qty_str.split()
+    if len(parts) == 2:
+        num, unit = parts
+        try:
+            num = float(num)
+        except:
+            return 0
+        if unit in ["kg", "kgs"]:
+            return num
+        elif unit == "g":
+            return num / 1000
+        elif unit in ["pcs", "liters"]:
+            return num
+    return 0
 
 def format_qty(num, unit):
     if unit == "g" and num >= 1000:
@@ -91,6 +125,10 @@ def generate_pdf_receipt_bytes(phone, items, grand_total):
     table = Table(data, colWidths=[180, 120, 120, 100])
     table.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.lightblue),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.black),
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("BOTTOMPADDING", (0,0), (-1,0), 12),
         ("GRID", (0,0), (-1,-1), 1, colors.black),
     ]))
     elements.append(table)
@@ -98,50 +136,13 @@ def generate_pdf_receipt_bytes(phone, items, grand_total):
     buffer.seek(0)
     return buffer.read()
 
-def upload_pdf_to_s3(file_bytes, filename):
-    """Upload PDF to S3 and return public URL, or None if AWS not set"""
-    if not (AWS_ACCESS_KEY and AWS_SECRET_KEY and AWS_BUCKET_NAME):
-        return None
-    try:
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id=AWS_ACCESS_KEY,
-            aws_secret_access_key=AWS_SECRET_KEY,
-        )
-        s3.put_object(Bucket=AWS_BUCKET_NAME, Key=filename, Body=file_bytes, ContentType="application/pdf")
-        url = f"https://{AWS_BUCKET_NAME}.s3.amazonaws.com/{filename}"
-        return url
-    except Exception as e:
-        st.error(f"S3 upload failed: {e}")
-        return None
-
-def send_receipt_via_whatsapp(phone, pdf_link):
-    try:
-        client = Client(TWILIO_SID, TWILIO_AUTH)
-        message = client.messages.create(
-            body=f"✅ Thank you for shopping! Download your receipt here: {pdf_link}",
-            from_=TWILIO_WHATSAPP,
-            to=f"whatsapp:+91{phone}"
-        )
-        return message.sid
-    except Exception as e:
-        st.error(f"WhatsApp failed: {e}")
-        return None
-
-def send_receipt_via_sms(phone, pdf_link):
-    try:
-        client = Client(TWILIO_SID, TWILIO_AUTH)
-        message = client.messages.create(
-            body=f"✅ Thank you for shopping! Download your receipt here: {pdf_link}",
-            from_=TWILIO_SMS,
-            to=f"+91{phone}"
-        )
-        return message.sid
-    except Exception as e:
-        st.error(f"SMS failed: {e}")
-        return None
-
 # ----------------- Defaults -----------------
+def remove_duplicates(items):
+    seen = {}
+    for item in items:
+        seen[item["name"]] = item
+    return list(seen.values())
+
 default_inventory = [
     {"name": "Brinjal", "qty": "15 kg", "price": 20, "cost": 12},
     {"name": "Onion", "qty": "10 kg", "price": 30, "cost": 18},
@@ -153,7 +154,8 @@ default_inventory = [
 
 # ----------------- Session State -----------------
 if "inventory" not in st.session_state:
-    st.session_state.inventory = safe_load_json(INVENTORY_FILE, default_inventory)
+    loaded = safe_load_json(INVENTORY_FILE, default_inventory)
+    st.session_state.inventory = remove_duplicates(loaded)
 if "customers" not in st.session_state:
     st.session_state.customers = safe_load_json(CUSTOMERS_FILE, [])
 if "cart" not in st.session_state:
@@ -162,58 +164,205 @@ if "owner_logged_in" not in st.session_state:
     st.session_state.owner_logged_in = False
 
 # ----------------- UI -----------------
-st.title("🛒 Vegetable Shop")
+st.title("🛒 Vegetable Shop (Web)")
+st.caption("Customer view + Owner controls. Weight items use ₹/kg; pieces use ₹/pc/liter.")
 
-# Inventory
+# Sidebar: Owner login
+st.sidebar.subheader("Owner Login")
+if not st.session_state.owner_logged_in:
+    with st.sidebar.form("owner_login_form"):
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        login = st.form_submit_button("Login")
+    if login:
+        if u == OWNER_USER and p == OWNER_PASS:
+            st.session_state.owner_logged_in = True
+            st.sidebar.success("Owner access granted!")
+        else:
+            st.sidebar.error("Incorrect credentials")
+else:
+    st.sidebar.success("Logged in as owner")
+    if st.sidebar.button("Logout"):
+        st.session_state.owner_logged_in = False
+
+# Inventory display
 st.subheader("Inventory")
-st.table(st.session_state.inventory)
+avail_map = {it["name"]: parse_qty(it["qty"]) for it in st.session_state.inventory}
+inv_rows = []
+for item in st.session_state.inventory:
+    qn, qu = avail_map[item["name"]]
+    show = {
+        "Name": item["name"],
+        "Available": format_qty(qn, qu),
+        "Price": f"₹{item['price']}/kg" if qu == "g" else f"₹{item['price']}/pc",
+    }
+    if st.session_state.owner_logged_in:
+        show["Cost"] = f"₹{item['cost']}"
+    inv_rows.append(show)
+st.dataframe(inv_rows, use_container_width=True, hide_index=True)
 
 # Add to cart
 st.subheader("Add to Cart")
 item_names = [it["name"] for it in st.session_state.inventory]
-item = st.selectbox("Select Item", item_names)
-qty = st.text_input("Quantity (e.g. 2 kg, 3 pcs)")
-if st.button("Add to Cart"):
-    st.session_state.cart.append({"name": item, "qty": qty, "price": next(i["price"] for i in st.session_state.inventory if i["name"] == item)})
-    st.success(f"Added {qty} of {item}")
+col1, col2, col3, col4 = st.columns([2, 1.5, 1.5, 1])
+with col1:
+    selected_name = st.selectbox("Item", item_names, key="add_item")
+with col2:
+    qty_number = st.number_input("Quantity", min_value=0.1, step=0.1, key="add_qty_num")
+with col3:
+    unit = st.selectbox("Unit", ["kg", "g", "pcs", "liters"], key="add_qty_unit")
+with col4:
+    if st.button("Add", key="add_button"):
+        if qty_number <= 0:
+            st.warning("Enter quantity greater than 0")
+        else:
+            stock_item = next(i for i in st.session_state.inventory if i["name"] == selected_name)
+            sn, su = parse_qty(stock_item["qty"])
+            qn = qty_number * 1000 if unit == "kg" and su == "g" else qty_number
+            if su and su != unit and not (unit == "kg" and su == "g"):
+                st.error(f"Use unit '{su}' for this item.")
+            elif qn > sn:
+                st.error("Not enough stock")
+            else:
+                qty_text = f"{qty_number} {unit}"
+                st.session_state.cart.append({"name": selected_name, "qty": qty_text, "price": stock_item["price"]})
+                st.success(f"Added {qty_text} of {selected_name}")
 
-# Cart
+# Cart view
 st.subheader("Cart")
-if st.session_state.cart:
-    st.table(st.session_state.cart)
+if not st.session_state.cart:
+    st.info("Cart is empty")
+else:
+    grand_total = 0
+    for idx, c in enumerate(st.session_state.cart):
+        qn, qu = parse_qty(c["qty"])
+        total = row_total(qn, qu, c["price"])
+        grand_total += total
+        with st.expander(f"{idx+1}. {c['name']} - {c['qty']} (₹{total:.2f})"):
+            st.write(f"Unit Price: ₹{c['price']}/{'kg' if qu=='g' else 'pc'}")
+            new_qty = st.text_input(f"Edit quantity for {c['name']}", value=c["qty"], key=f"edit_qty_{idx}")
+            cols = st.columns([1, 1])
+            with cols[0]:
+                if st.button("Update", key=f"update_{idx}"):
+                    stock_item = next(i for i in st.session_state.inventory if i["name"] == c["name"])
+                    sn, su = parse_qty(stock_item["qty"])
+                    qn_new, qu_new = parse_qty(new_qty)
+                    if qu_new != su:
+                        st.error(f"Use unit '{su}' for this item.")
+                    elif qn_new > sn:
+                        st.error("Not enough stock")
+                    elif qn_new <= 0:
+                        st.error("Quantity must be greater than 0")
+                    else:
+                        st.session_state.cart[idx]["qty"] = new_qty
+                        st.success("Updated!")
+                        st.rerun()
+            with cols[1]:
+                if st.button("Remove", key=f"remove_{idx}"):
+                    st.session_state.cart.pop(idx)
+                    st.rerun()
+    st.markdown(f"**Grand Total: ₹{grand_total:.2f}**")
 
 # Checkout
 st.subheader("Checkout")
-phone = st.text_input("Customer Phone (10 digits)")
-if st.button("Generate Bill & Send"):
-    if not phone.isdigit() or len(phone) != 10:
-        st.error("Phone must be 10 digits")
-    elif not st.session_state.cart:
+with st.form("checkout_form"):
+    phone = st.text_input("Customer Phone (10 digits)", max_chars=10)
+    submitted = st.form_submit_button("Generate Bill & Update Stock")
+if submitted:
+    if not st.session_state.cart:
         st.error("Cart is empty")
+    elif not (phone.isdigit() and len(phone) == 10):
+        st.error("Phone must be 10 digits")
     else:
+        for c in st.session_state.cart:
+            item = next(i for i in st.session_state.inventory if i["name"] == c["name"])
+            base_num, base_unit = parse_qty(item["qty"])
+            qn, qu = parse_qty(c["qty"])
+            if qu == base_unit:
+                item["qty"] = format_qty(max(base_num - qn, 0), base_unit)
         grand_total = sum([row_total(*parse_qty(c["qty"]), c["price"]) for c in st.session_state.cart])
+        order = {"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "phone": phone,
+                 "items": st.session_state.cart.copy(), "total": grand_total}
+        st.session_state.customers.append(order)
+        save_json(INVENTORY_FILE, st.session_state.inventory)
+        save_json(CUSTOMERS_FILE, st.session_state.customers)
         pdf_bytes = generate_pdf_receipt_bytes(phone, st.session_state.cart, grand_total)
+        st.download_button("⬇️ Download PDF Receipt", data=pdf_bytes,
+                           file_name=f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                           mime="application/pdf")
 
-        # Local download
-        st.download_button("⬇️ Download Receipt", pdf_bytes, file_name="receipt.pdf", mime="application/pdf")
+        # -------- Send to phone (Twilio) --------
+        st.write("### Send Receipt Link to Phone")
+        pdf_link = "https://example.com/your_uploaded_receipt.pdf"  # replace with real link after upload
+        send_cols = st.columns(2)
+        with send_cols[0]:
+            if st.button("Send via WhatsApp"):
+                try:
+                    sid = send_receipt_via_whatsapp(phone, pdf_link)
+                    st.success(f"WhatsApp sent! SID: {sid}")
+                except Exception as e:
+                    st.error(f"Failed: {e}")
+        with send_cols[1]:
+            if st.button("Send via SMS"):
+                try:
+                    sid = send_receipt_via_sms(phone, pdf_link)
+                    st.success(f"SMS sent! SID: {sid}")
+                except Exception as e:
+                    st.error(f"Failed: {e}")
 
-        # Upload to S3
-        filename = f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        pdf_url = upload_pdf_to_s3(pdf_bytes, filename)
-
-        if pdf_url:
-            # Send via WhatsApp
-            sid = send_receipt_via_whatsapp(phone, pdf_url)
-            if sid:
-                st.success(f"✅ WhatsApp sent! SID: {sid}")
-
-            # Send via SMS
-            sid = send_receipt_via_sms(phone, pdf_url)
-            if sid:
-                st.success(f"✅ SMS sent! SID: {sid}")
-        else:
-            st.warning("⚠️ Could not upload to S3. Receipt only available for download.")
-
-        # Clear cart
         st.session_state.cart = []
+        st.success(f"Checkout complete. Total ₹{grand_total:.2f}")
+
+
+# Owner section
+if st.session_state.owner_logged_in:
+    st.divider()
+    st.subheader("Owner: Manage Inventory")
+    with st.form("add_item_form"):
+        col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+        with col1: name = st.text_input("Item Name")
+        with col2: qty = st.text_input("Quantity (e.g., 5 kg, 500 g, 3 pcs, 2 liters)")
+        with col3: price = st.number_input("Selling Price", min_value=0, step=1, value=0)
+        with col4: cost = st.number_input("Cost Price", min_value=0, step=1, value=0)
+        add_btn = st.form_submit_button("Add Item")
+    if add_btn and name and qty:
+        qty_clean = qty.strip()
+        existing = next((i for i in st.session_state.inventory if i["name"].lower() == name.lower()), None)
+        if existing:
+            old_qty_kg = parse_qty_to_kg(existing["qty"])
+            new_qty_kg = parse_qty_to_kg(qty_clean)
+            total_qty_kg = old_qty_kg + new_qty_kg
+            if "pcs" in existing["qty"].lower():
+                existing.update({"qty": f"{int(total_qty_kg)} pcs", "price": int(price), "cost": int(cost)})
+            elif "liter" in existing["qty"].lower():
+                existing.update({"qty": f"{total_qty_kg} liters", "price": int(price), "cost": int(cost)})
+            else:
+                existing.update({"qty": f"{total_qty_kg} kg", "price": int(price), "cost": int(cost)})
+            st.success("Item updated (quantity added)")
+        else:
+            st.session_state.inventory.append({"name": name, "qty": qty_clean, "price": int(price), "cost": int(cost)})
+            st.success("Item added")
+        save_json(INVENTORY_FILE, remove_duplicates(st.session_state.inventory))
+
+    st.markdown("### Update / Remove")
+    names = [i["name"] for i in st.session_state.inventory]
+    if names:
+        sel = st.selectbox("Select Item", names, key="owner_select")
+        item = next(i for i in st.session_state.inventory if i["name"] == sel)
+        u_qty = st.text_input("New Quantity", value=item["qty"], key="owner_qty")
+        u_price = st.number_input("New Price", value=int(item["price"]), step=1, key="owner_price")
+        u_cost = st.number_input("New Cost", value=int(item.get("cost", 0)), step=1, key="owner_cost")
+        cols = st.columns(2)
+        if cols[0].button("Update", key="owner_update"):
+            item.update({"qty": u_qty, "price": int(u_price), "cost": int(u_cost)})
+            save_json(INVENTORY_FILE, remove_duplicates(st.session_state.inventory))
+            st.success("Updated")
+        if cols[1].button("Remove", key="owner_remove"):
+            st.session_state.inventory = [i for i in st.session_state.inventory if i["name"] != sel]
+            save_json(INVENTORY_FILE, st.session_state.inventory)
+            st.success("Removed")
+
+
+
+
 
