@@ -17,14 +17,13 @@ INVENTORY_FILE = "inventory.json"
 CUSTOMERS_FILE = "customers.json"
 
 # ----------------- Load Secrets -----------------
-TWILIO_SID = st.secrets.get("TWILIO_SID", "")
-TWILIO_AUTH = st.secrets.get("TWILIO_AUTH", "")
-TWILIO_WHATSAPP = "whatsapp:+14155238886"
-TWILIO_SMS = st.secrets.get("TWILIO_SMS", "")
+AWS_ACCESS_KEY = "your_aws_access_key_id"
+AWS_SECRET_KEY = "your_aws_secret_access_key"
+AWS_BUCKET_NAME = "your-bucket-name"
 
-AWS_ACCESS_KEY = st.secrets.get("AWS_ACCESS_KEY", "")
-AWS_SECRET_KEY = st.secrets.get("AWS_SECRET_KEY", "")
-AWS_BUCKET_NAME = st.secrets.get("AWS_BUCKET_NAME", "")
+TWILIO_SID = "your_twilio_account_sid"
+TWILIO_AUTH = "your_twilio_auth_token"
+TWILIO_SMS = "+1234567890"   # your Twilio phone number (SMS capable)
 
 # ----------------- Helpers -----------------
 def safe_load_json(path, default):
@@ -217,3 +216,4 @@ if st.button("Generate Bill & Send"):
 
         # Clear cart
         st.session_state.cart = []
+
