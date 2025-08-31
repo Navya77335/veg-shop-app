@@ -8,52 +8,23 @@ from reportlab.lib.styles import getSampleStyleSheet
 from twilio.rest import Client
 import boto3
 
-# ----------------- Twilio Config -----------------
-TWILIO_SID = "your_twilio_sid"
-TWILIO_AUTH = "your_auth_token"
-TWILIO_WHATSAPP = "whatsapp:+14155238886"  # Twilio sandbox number
-TWILIO_SMS = "+1234567890"  # Twilio SMS sender number
-
-# ----------------- AWS Config -----------------
-AWS_ACCESS_KEY = "your_aws_access_key"
-AWS_SECRET_KEY = "your_aws_secret_key"
-AWS_BUCKET_NAME = "your-bucket-name"
-
-def upload_pdf_to_s3(file_bytes, filename):
-    """Upload PDF to S3 and return public URL"""
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id=AWS_ACCESS_KEY,
-        aws_secret_access_key=AWS_SECRET_KEY,
-    )
-    s3.put_object(Bucket=AWS_BUCKET_NAME, Key=filename, Body=file_bytes, ContentType="application/pdf")
-    url = f"https://{AWS_BUCKET_NAME}.s3.amazonaws.com/{filename}"
-    return url
-
-def send_receipt_via_whatsapp(phone, pdf_link):
-    client = Client(TWILIO_SID, TWILIO_AUTH)
-    message = client.messages.create(
-        body=f"✅ Thank you for shopping! Download your receipt here: {pdf_link}",
-        from_=TWILIO_WHATSAPP,
-        to=f"whatsapp:+91{phone}"
-    )
-    return message.sid
-
-def send_receipt_via_sms(phone, pdf_link):
-    client = Client(TWILIO_SID, TWILIO_AUTH)
-    message = client.messages.create(
-        body=f"✅ Thank you for shopping! Download your receipt here: {pdf_link}",
-        from_=TWILIO_SMS,
-        to=f"+91{phone}"
-    )
-    return message.sid
-
 # ----------------- Config -----------------
 st.set_page_config(page_title="Vegetable Shop", layout="wide")
+
 OWNER_USER = "Sidhu"
 OWNER_PASS = "Mani@2"
 INVENTORY_FILE = "inventory.json"
 CUSTOMERS_FILE = "customers.json"
+
+# ----------------- Load Secrets -----------------
+TWILIO_SID = st.secrets.get("TWILIO_SID", "")
+TWILIO_AUTH = st.secrets.get("TWILIO_AUTH", "")
+TWILIO_WHATSAPP = "whatsapp:+14155238886"
+TWILIO_SMS = st.secrets.get("TWILIO_SMS", "")
+
+AWS_ACCESS_KEY = st.secrets.get("AWS_ACCESS_KEY", "")
+AWS_SECRET_KEY = st.secrets.get("AWS_SECRET_KEY", "")
+AWS_BUCKET_NAME = st.secrets.get("AWS_BUCKET_NAME", "")
 
 # ----------------- Helpers -----------------
 def safe_load_json(path, default):
@@ -128,6 +99,49 @@ def generate_pdf_receipt_bytes(phone, items, grand_total):
     buffer.seek(0)
     return buffer.read()
 
+def upload_pdf_to_s3(file_bytes, filename):
+    """Upload PDF to S3 and return public URL, or None if AWS not set"""
+    if not (AWS_ACCESS_KEY and AWS_SECRET_KEY and AWS_BUCKET_NAME):
+        return None
+    try:
+        s3 = boto3.client(
+            "s3",
+            aws_access_key_id=AWS_ACCESS_KEY,
+            aws_secret_access_key=AWS_SECRET_KEY,
+        )
+        s3.put_object(Bucket=AWS_BUCKET_NAME, Key=filename, Body=file_bytes, ContentType="application/pdf")
+        url = f"https://{AWS_BUCKET_NAME}.s3.amazonaws.com/{filename}"
+        return url
+    except Exception as e:
+        st.error(f"S3 upload failed: {e}")
+        return None
+
+def send_receipt_via_whatsapp(phone, pdf_link):
+    try:
+        client = Client(TWILIO_SID, TWILIO_AUTH)
+        message = client.messages.create(
+            body=f"✅ Thank you for shopping! Download your receipt here: {pdf_link}",
+            from_=TWILIO_WHATSAPP,
+            to=f"whatsapp:+91{phone}"
+        )
+        return message.sid
+    except Exception as e:
+        st.error(f"WhatsApp failed: {e}")
+        return None
+
+def send_receipt_via_sms(phone, pdf_link):
+    try:
+        client = Client(TWILIO_SID, TWILIO_AUTH)
+        message = client.messages.create(
+            body=f"✅ Thank you for shopping! Download your receipt here: {pdf_link}",
+            from_=TWILIO_SMS,
+            to=f"+91{phone}"
+        )
+        return message.sid
+    except Exception as e:
+        st.error(f"SMS failed: {e}")
+        return None
+
 # ----------------- Defaults -----------------
 default_inventory = [
     {"name": "Brinjal", "qty": "15 kg", "price": 20, "cost": 12},
@@ -188,19 +202,18 @@ if st.button("Generate Bill & Send"):
         filename = f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         pdf_url = upload_pdf_to_s3(pdf_bytes, filename)
 
-        # Send via WhatsApp
-        try:
+        if pdf_url:
+            # Send via WhatsApp
             sid = send_receipt_via_whatsapp(phone, pdf_url)
-            st.success(f"✅ WhatsApp sent! SID: {sid}")
-        except Exception as e:
-            st.error(f"WhatsApp failed: {e}")
+            if sid:
+                st.success(f"✅ WhatsApp sent! SID: {sid}")
 
-        # Send via SMS
-        try:
+            # Send via SMS
             sid = send_receipt_via_sms(phone, pdf_url)
-            st.success(f"✅ SMS sent! SID: {sid}")
-        except Exception as e:
-            st.error(f"SMS failed: {e}")
+            if sid:
+                st.success(f"✅ SMS sent! SID: {sid}")
+        else:
+            st.warning("⚠️ Could not upload to S3. Receipt only available for download.")
 
         # Clear cart
         st.session_state.cart = []
